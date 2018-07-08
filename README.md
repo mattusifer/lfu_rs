@@ -14,7 +14,7 @@ let mut cache: LFUCache<K, V> = LFUCache::new(10);
 
 // Insertion
 // Returns the old value if this key already existed
-cache.insert(K, V) // -> Option<&V>
+cache.insert(K, V) // -> Option<V>
 
 // Retrieval
 myValue = c.get(&K) // -> Option<&V>
