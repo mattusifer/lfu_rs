@@ -1,6 +1,7 @@
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
+// Trait for objects that contain a reference to the head of a linked list
 pub trait HasHead
 where Self: Sized {
     type Element: Node;
@@ -55,6 +56,7 @@ where Self: Sized {
     }
 }
 
+// Trait for objects that are nodes in a linked list
 pub trait Node
 where Self: Sized {
 
@@ -63,6 +65,15 @@ where Self: Sized {
     fn get_prev(&self) -> Option<Weak<RefCell<Self>>>;
     fn set_prev(&mut self, new_prev: Option<Weak<RefCell<Self>>>);
 
+    fn is_head(&self) -> bool {
+        self.get_prev().is_none()
+    }
+
+    fn is_only_child(&self) -> bool {
+        self.get_prev().is_none() && self.get_next().is_none()
+    }
+
+    // Fold left from this node
     fn reduce_forward<U, F>(&self, f: F, out: U) -> U
     where F: Fn(U, Rc<RefCell<Self>>) -> U {
         match self.get_next() {
@@ -74,7 +85,7 @@ where Self: Sized {
         }
     }
 
-    fn remove(&self) {
+    fn remove(&mut self) {
         match self.get_next() {
             None => {}
             Some(ref next) => {
@@ -100,8 +111,11 @@ where Self: Sized {
                 }
             }
         }
+        self.set_next(None);
+        self.set_prev(None);
     }
 
+    // Get the depth from this node to the list head
     fn get_depth_from_node(&self, node: Rc<RefCell<Self>>, depth: usize) -> usize {
         match node.borrow().get_prev() {
             Some(ref prev) => {

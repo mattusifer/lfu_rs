@@ -7,6 +7,7 @@ use std::fmt::Display;
 pub mod nodes;
 use nodes::{HasHead, Node};
 
+// A single node in the cache
 #[derive(Debug)]
 pub struct CacheNode<K, V>
 where K: Hash + Eq + Clone {
@@ -18,26 +19,10 @@ where K: Hash + Eq + Clone {
 
 impl<K, V> CacheNode<K, V>
 where K: Hash + Eq + Clone {
-   pub fn get_identifier(&self) -> (usize, usize) {
-        let depth = if let Some(ref prev) = self.prev {
-            self.get_depth_from_node(prev.upgrade().unwrap(), 1)
-        } else {
-            0
-        };
-
-        (self.parent.borrow().frequency, depth)
-    }
-
+    // Get the actual value associated with this cache node. This is
+    // used exclusively for testing and display purposes.
     pub fn get_associated_data<'a>(&self, cache: &'a LFUCache<K, V>) -> &'a V {
-        let id = self.get_identifier();
-
-        for (data, node) in cache.cache.values() {
-            if node.borrow().get_identifier() == id {
-                return data;
-            }
-        }
-
-        panic!("This node could not be found in the hashmap.")
+        &cache.cache.get(&self.key).unwrap().0
     }
 }
 
@@ -63,6 +48,9 @@ where K: Hash + Eq + Clone {
     }
 }
 
+// A linked list of CacheNode objects with the same frequency. This
+// struct is also itself a node in a linked list of FrequencyList
+// objects.
 #[derive(Debug)]
 pub struct FrequencyList<K, V>
 where K: Hash + Eq + Clone {
@@ -118,7 +106,6 @@ where K: Hash + Eq + Clone {
 impl<K, V> nodes::HasHead for FrequencyList<K, V>
 where K: Hash + Eq + Clone {
     type Element = CacheNode<K, V>;
-
     fn get_head(&self) -> Option<Rc<RefCell<CacheNode<K, V>>>> {
         match self.head {
             None => {None}
@@ -130,7 +117,7 @@ where K: Hash + Eq + Clone {
     }
 }
 
-
+// This is the main struct and the entrypoint to the cache.
 #[derive(Debug)]
 pub struct LFUCache<K, V>
 where K: Hash + Eq + Clone {
@@ -165,58 +152,58 @@ where K: Hash + Eq + Clone, V: Display {
         }
     }
 
+    // Given a node in the cache that was recently used, increment
+    // this node's frequency by moving it ahead to the next frequency
+    // list.
     fn increment_node_frequency(&mut self, node: Rc<RefCell<CacheNode<K, V>>>) {
-        // point the parent node ahead to the new parent
+        // Create and initialize the new parent list. This might be an
+        // existing list, or we might need to create a new one.
         let new_parent = {
-            let node_i = node.borrow();
+            let node = node.borrow();
 
-            let current_frequency = node_i.parent.borrow().frequency;
-            let next_frequency_list = &node_i.parent.borrow().next;
+            let current_frequency = node.parent.borrow().frequency;
 
-            let there_is_a_gap = next_frequency_list.is_some() &&
-                next_frequency_list.as_ref().unwrap().borrow().frequency != current_frequency + 1;
+            let there_is_a_gap = {
+                let next_list = &node.parent.borrow().next;
+                next_list.is_some() && next_list.as_ref().unwrap().borrow().frequency
+                    != current_frequency + 1
+            };
 
             // if either the next frequency does doesn't exist (this is
             // the last one) or the next frequency list's frequency is not
             // the current frequency + 1 (there is a gap), we need to
             // create a new frequency list and add this node to it.
-            let new_parent = if next_frequency_list.is_none() || there_is_a_gap {
-                // create new parent list
+            let new_parent = if node.parent.borrow().next.is_none() || there_is_a_gap {
+                // create new parent list and connect it to the old parent
                 Rc::new(RefCell::new(FrequencyList::new(current_frequency + 1)))
             } else {
-                Rc::clone(next_frequency_list.as_ref().unwrap())
+                Rc::clone(node.parent.borrow().next.as_ref().unwrap())
             };
 
             // if the next frequency list did exist, but there was a
             // gap, we need to point it back to the new parent
             if there_is_a_gap {
-                next_frequency_list.as_ref().unwrap()
+                let next_list = &node.parent.borrow().next;
+                next_list.as_ref().unwrap()
                     .borrow_mut().prev = Some(Rc::downgrade(&new_parent));
                 new_parent.borrow_mut().next = Some(Rc::clone(
-                    next_frequency_list.as_ref().unwrap()
+                    next_list.as_ref().unwrap()
                 ));
             }
 
+            // Point the new parent back to the old parent in case
+            // they are not connected.
+            new_parent.borrow_mut().prev = Some(Rc::downgrade(&node.parent));
+            node.parent.borrow_mut().next = Some(Rc::clone(&new_parent));
+
             new_parent
         };
-        {
-            // connect the new parent to the old parent
-            let node_i = node.borrow();
-            new_parent.borrow_mut().prev = Some(Rc::downgrade(&node_i.parent));
-            node_i.parent.borrow_mut().next = Some(Rc::clone(&new_parent));
-        }
 
         // if this is the last node in it's current parent, we
         // need to remove the current parent
         if node.borrow().next.is_none() && node.borrow().prev.is_none() {
-            let node_i = node.borrow();
-
-            // repoint the current parent's next and previous to each other
-            node_i.parent.borrow().remove();
-
-            // nullify all existing pointers
-            node_i.parent.borrow_mut().next = None;
-            node_i.parent.borrow_mut().prev = None;
+            let node = node.borrow();
+            node.parent.borrow_mut().remove();
         }
 
         // if this node is the head, we need to advance the head of
@@ -234,20 +221,18 @@ where K: Hash + Eq + Clone, V: Display {
             self.frequency_list_head = Some(Rc::clone(&new_parent));
         }
 
-        // point the node next back to the node previous, and vice versa
-        node.borrow().remove();
-
-        // officially add this node to it's new parent by prepending
-        // it to the linked list
+        // remove this node from it's list and add it to its new parent
+        node.borrow_mut().remove();
         new_parent.borrow_mut().push(Rc::clone(&node));
     }
 
+    // remove the given node from the internal cache structures
     fn remove_node(&mut self, node: Rc<RefCell<CacheNode<K, V>>>) {
-        if node.borrow().prev.is_none() {
+        if node.borrow().is_head() {
             let node_parent = {
                 Rc::clone(&node.borrow().parent)
             };
-            if node.borrow().next.is_none() {
+            if node.borrow().is_only_child() {
                 node_parent.borrow_mut().remove();
             }
             node_parent.borrow_mut().pop_head();
@@ -256,6 +241,7 @@ where K: Hash + Eq + Clone, V: Display {
         node.borrow_mut().remove();
     }
 
+    // Get the value associated with the given key
     pub fn get(&mut self, key: &K) -> Option<&V> {
         let node = Rc::clone(&self.cache.get(key)?.1);
         self.increment_node_frequency(Rc::clone(&node));
@@ -264,6 +250,7 @@ where K: Hash + Eq + Clone, V: Display {
         Some(&data)
     }
 
+    // Remove the value associated with the given key.
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let node = Rc::clone(&self.cache.get(&key)?.1);
         self.remove_node(Rc::clone(&node));
@@ -272,10 +259,12 @@ where K: Hash + Eq + Clone, V: Display {
         Some(data)
     }
 
+    // Insert the value associated with the given key. If this
+    // operations means that the cache size will be greater than the
+    // max size, evict the least frequently used key.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         if !self.cache.contains_key(&key) {
-            // are there any frequency lists? (if not, this is the
-            // first item in the cache.)g
+            // Get the first frequency list if it exists
             match self.pop_head() {
                 None => {
                     // create a new list and a new node, connect them.
@@ -307,7 +296,7 @@ where K: Hash + Eq + Clone, V: Display {
                         self.remove(&key);
                     }
 
-                    // if the existing list's frequency is 1, we can use it.
+                    // if the first list's frequency is 1, we can use it.
                     if list.borrow().frequency == 1 {
                         // create a new node and link it to the existing list
                         let new_node = Rc::new(RefCell::new(CacheNode {
@@ -332,7 +321,8 @@ where K: Hash + Eq + Clone, V: Display {
                             key: key.clone(), next: None, prev: None
                         }));
 
-                        // mutable reference block
+                        // Push the new node onto the new list, push
+                        // the new list onto the cache.
                         new_frequency_list.borrow_mut().push(Rc::clone(&new_node));
                         self.push(Rc::clone(&new_frequency_list));
 
@@ -356,7 +346,6 @@ where K: Hash + Eq + Clone, V: Display {
 impl<K, V> nodes::HasHead for LFUCache<K, V>
 where K: Hash + Eq + Clone {
     type Element = FrequencyList<K, V>;
-
     fn get_head(&self) -> Option<Rc<RefCell<FrequencyList<K, V>>>> {
         match self.frequency_list_head {
             None => {None}
