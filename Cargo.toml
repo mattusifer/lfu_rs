@@ -1,0 +1,6 @@
+[package]
+name = "lfu_rs"
+version = "0.1.0"
+authors = ["Matt Usifer <mattusifer@gmail.com>"]
+
+[dependencies]

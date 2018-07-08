@@ -1,0 +1,49 @@
+language: rust
+env:
+  global:
+    - PROJECT_NAME: lfu_cache
+    - RUST_BACKTRACE: full
+matrix:
+  fast_finish: true
+  include:
+    # Nightly channel.
+    - os: linux
+      rust: nightly
+      env: TARGET=i686-unknown-linux-musl
+    - os: linux
+      rust: nightly
+      env: TARGET=x86_64-unknown-linux-musl
+    - os: osx
+      rust: nightly
+      env: TARGET=x86_64-apple-darwin
+    - os: linux
+      rust: nightly
+      env: TARGET=arm-unknown-linux-gnueabihf GCC_VERSION=4.8
+    # Beta channel.
+    - os: linux
+      rust: beta
+      env: TARGET=x86_64-unknown-linux-musl
+    - os: linux
+      rust: beta
+      env: TARGET=x86_64-unknown-linux-gnu
+    # Minimum Rust supported channel.
+    - os: linux
+      rust: 1.26.0
+      env: TARGET=x86_64-unknown-linux-gnu
+    - os: linux
+      rust: 1.26.0
+      env: TARGET=x86_64-unknown-linux-musl
+    - os: linux
+      rust: 1.26.0
+      env: TARGET=arm-unknown-linux-gnueabihf GCC_VERSION=4.8
+script: cargo test
+branches:
+  only:
+    # Pushes and PR to the master branch
+    - master
+    # Ruby regex to match tags. Required, or travis won't trigger deploys when
+    # a new tag is pushed.
+    - /^\d+\.\d+\.\d+.*$/
+notifications:
+  email:
+on_success: never
